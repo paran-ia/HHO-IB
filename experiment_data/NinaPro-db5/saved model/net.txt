@@ -1,0 +1,99 @@
+class NinaPro_db5_Net(nn.Module):
+    def __init__(self,sn = IF,num_classes=52,logvar_t=-1.0, train_logvar_t=False,record_T = False,record_MI = False):
+        super().__init__()
+        self.HY = np.log(num_classes)  # in natts
+        self.ce = nn.CrossEntropyLoss()
+        self.record_T = record_T#开启会在测试集上记录隐变量T
+        self.is_eval = False#是否在测试阶段，在测试阶段才会记录T
+        self.record_MI = record_MI#开启会在训练集和测试集上分别记录IXT,ITY,HY_given_T
+        if train_logvar_t:
+            self.logvar_t = torch.nn.Parameter(torch.Tensor([logvar_t]))
+        else:
+            self.logvar_t = torch.Tensor([logvar_t]).cuda()
+        self.linear1 = Linear(16,16*32)
+        self.bn1 = nn.BatchNorm1d(16*32)
+        self.sn1 = sn()
+        self.linear2 = Linear(16*32, 16*8)
+        self.bn2 = nn.BatchNorm1d(16*8)
+        self.sn2 = sn()
+        self.linear3 = Linear(16*8, 16*64)
+        self.bn3 = nn.BatchNorm1d(16*64)
+        self.sn3 = sn()
+        self.linear4 = Linear(16*64, 16*32)
+        self.bn4 = nn.BatchNorm1d(16*32)
+        self.sn4 = sn()
+        self.linear5 = Linear(16*32, 53)
+
+        for m in self.modules():
+            if isinstance(m, Linear):
+                m.step_mode = 'm'
+    def encoder1(self,x):
+        x = self.linear1(x)
+        T,B,L =x.shape
+        x = x.reshape(-1,L)
+        x = self.bn1(x)
+        x = x.reshape(T,B,L)
+        x = self.sn1(x)
+
+        out = self.linear2(x)
+        T, B, L = out.shape
+        out = out.reshape(-1, L)
+        out = self.bn2(out)
+        out = out.reshape(T, B, L)
+        out = self.sn2(out)
+
+        out+=self.linear2(x)
+
+        return out
+
+    def encoder2(self, x):
+
+        x = self.linear3(x)
+        T, B, L = x.shape
+        x = x.reshape(-1, L)
+        x = self.bn3(x)
+        x = x.reshape(T, B, L)
+        x = self.sn3(x)
+
+
+        x = self.linear4(x)
+        T, B, L = x.shape
+        x = x.reshape(-1, L)
+        x = self.bn4(x)
+        x = x.reshape(T, B, L)
+        x = self.sn4(x)
+        return x
+
+    def decoder(self,x):
+        x = self.linear5(x)
+        return x
+
+    def forward(self,x):
+        x = self.encoder1(x)
+        T1 = x.mean(0)
+        self.IXT = []
+        self.IXT.append(self._get_IXT(T1))
+        x = self.encoder2(x)
+        #x = x+self._add_noise(x)
+        T2 = x.mean(0)
+        if self.record_T == True:
+            if self.is_eval == True:
+                self.T = T2
+        self.IXT.append(self._get_IXT(T2))
+        x = self.decoder(x)
+        return x.mean(0)
+
+    def _add_noise(self, mean_t):
+        noise = torch.exp(0.5 * self.logvar_t) * torch.randn_like(mean_t)
+        return noise
+
+    def _get_IXT(self, mean_t):
+        '''
+        Obtains the mutual information between the iput and the bottleneck variable.
+        Parameters:
+        - mean_t (Tensor) : deterministic transformation of the input
+        '''
+
+        IXT = KDE_IXT_estimation(self.logvar_t, mean_t)  # in natts
+        IXT = IXT / np.log(2)  # in bits
+        return IXT

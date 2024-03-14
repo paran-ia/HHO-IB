@@ -1,0 +1,8 @@
+Per-class Accuracy:
+Class 1: 90.7
+Class 2: 84.21
+Class 3: 92.68
+Class 4: 85.37
+Class 5: 72.09
+Class 6: 89.13
+Avg Accuracy: 85.71
